@@ -3,13 +3,36 @@
   # (or any Linux with Nix). It provides the native build inputs the desktop app
   # compiles against and the shared libraries Electron's prebuilt binary loads.
   # Usage: `nix develop`, then follow docs/DEVELOPMENT.md (vp i, vp run dev:desktop).
-  description = "Continuum IDE development shell";
+  # The package (`nix run`, `packages.<system>.default`) builds the desktop app
+  # from this checkout with nix/package.nix.
+  description = "Continuum IDE: desktop IDE for coding agents";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
+      version = (builtins.fromJSON (builtins.readFile ./apps/desktop/package.json)).version;
+      # Bump whenever pnpm-lock.yaml changes; the build prints the new hash.
+      pnpmDepsHash = "sha256-27Ljt2lY4J1Fi3ddVIflPQ5erRqmgaZ8+YBH9fhCLzo=";
+      continuum-ide =
+        pkgs:
+        pkgs.callPackage ./nix/package.nix {
+          inherit version pnpmDepsHash;
+          # Leave out VCS metadata and the agents' reference checkouts.
+          src = nixpkgs.lib.cleanSourceWith {
+            name = "continuum-ide-source";
+            src = self;
+            filter =
+              path: _type:
+              !(builtins.elem (baseNameOf path) [
+                ".git"
+                ".jj"
+                ".repos"
+                "node_modules"
+              ]);
+          };
+        };
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -55,6 +78,13 @@
         ];
     in
     {
+      packages = forAllSystems (pkgs: {
+        default = continuum-ide pkgs;
+        continuum-ide = continuum-ide pkgs;
+      });
+
+      overlays.default = final: _prev: { continuum-ide = continuum-ide final; };
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
